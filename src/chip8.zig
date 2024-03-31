@@ -58,7 +58,7 @@ pub fn init(program_reader: std.io.AnyReader, seed: u64) !This {
 }
 
 pub fn cycle(this: *This) void {
-    const operation: u16 = @as(u16, this.ram[this.program_counter]) << 8 | this.ram[this.program_counter + 1];
+    const operation = @as(u16, this.ram[this.program_counter]) << 8 | this.ram[this.program_counter + 1];
 
     switch (operation >> 12) {
         0x0 => {
@@ -101,13 +101,13 @@ pub fn cycle(this: *This) void {
         // 3xkk - SE Vx, byte
         0x3 => {
             const x = (operation >> 8) & 0xF;
-            this.program_counter += if (this.registers[x] == (operation & 0x00FF)) 4 else 2;
+            this.program_counter += if (this.registers[x] == (operation & 0xFF)) 4 else 2;
         },
 
         // 4xkk - SNE Vx, byte
         0x4 => {
             const x = (operation >> 8) & 0xF;
-            this.program_counter += if (this.registers[x] != (operation & 0x00FF)) 4 else 2;
+            this.program_counter += if (this.registers[x] != (operation & 0xFF)) 4 else 2;
         },
 
         // 5xy0 - SE Vx, Vy
@@ -143,7 +143,6 @@ pub fn cycle(this: *This) void {
                 //  8xy0 - LD Vx, Vy
                 0x0 => {
                     this.registers[x] = this.registers[y];
-                    this.registers[0xF] = 0;
                 },
 
                 // 8xy1 - OR Vx, Vy
@@ -219,20 +218,20 @@ pub fn cycle(this: *This) void {
 
         // Annn - LD I, addr
         0xA => {
-            this.index = operation & 0x0FFF;
+            this.index = operation & 0xFFF;
 
             this.program_counter += 2;
         },
 
         // Bnnn - JP V0, addr
         0xB => {
-            this.program_counter = (operation & 0x0FFF) + this.registers[0];
+            this.program_counter = (operation & 0xFFF) + this.registers[0];
         },
 
         // Cxkk - RND Vx, byte
         0xC => {
             const x = (operation >> 8) & 0xF;
-            this.registers[x] = @truncate(this.generator.random().int(u8) % (operation & 0x00FF));
+            this.registers[x] = this.generator.random().int(u8) & @as(u8, @truncate(operation & 0xFF));
 
             this.program_counter += 2;
         },
@@ -268,7 +267,7 @@ pub fn cycle(this: *This) void {
         // ExA1 - SKNP Vx
         0xE => {
             const x = (operation >> 8) & 0xF;
-            const mode = operation & 0x00FF;
+            const mode = operation & 0xFF;
             const shift = (@bitSizeOf(@TypeOf(this.keys)) - 1) - @as(u4, @intCast(this.registers[x]));
             const key = ((this.keys >> shift) & 1) == 1;
 
@@ -278,7 +277,7 @@ pub fn cycle(this: *This) void {
         0xF => {
             const x = (operation >> 8) & 0xF;
 
-            switch (operation & 0x00FF) {
+            switch (operation & 0xFF) {
 
                 // Fx07 - LD Vx, DT
                 0x07 => {
