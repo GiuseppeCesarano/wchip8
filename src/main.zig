@@ -47,11 +47,11 @@ pub fn main() !void {
         chip.delay_timer -|= @intFromBool(is_60Hz);
         chip.sound_timer -|= @intFromBool(is_60Hz);
 
-        if (chip.is_draw_needed() and is_60Hz) {
+        if (chip.isDrawNeeded() and is_60Hz) {
             screen.writeDisplayBuffer(chip.display);
             screen.draw();
 
-            chip.clear_draw_needed();
+            chip.clearDrawNeeded();
         }
 
         std.time.sleep(cycle_target_time -| cycle_timer.lap());

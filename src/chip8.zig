@@ -36,19 +36,14 @@ stack_pointer: u8,
 display: [64]u32,
 keys: u16,
 
-generator: std.Random.Pcg,
-
-const keys_statuses_location = font.len;
-const keys_statuses_type: type = [2]u16;
-
-const is_draw_needed_location = keys_statuses_location + @sizeOf(keys_statuses_type) + 2;
-
 pub fn init(program_reader: std.io.AnyReader, seed: u64) !This {
-    var instance = std.mem.zeroInit(This, .{ .program_counter = program_entrypoint, .ram = undefined, .generator = std.Random.Pcg.init(seed) });
+    var instance = std.mem.zeroInit(This, .{ .program_counter = program_entrypoint, .ram = undefined });
+
+    instance.generator().* = std.Random.Pcg.init(seed);
 
     std.mem.copyForwards(u8, instance.ram[0..font.len], &font);
 
-    const keys_statuses: *keys_statuses_type = @ptrCast(@alignCast(&instance.ram[keys_statuses_location]));
+    const keys_statuses = instance.keysStatuses();
     keys_statuses[0] = std.math.maxInt(@TypeOf(keys_statuses[0]));
     keys_statuses[1] = 0;
 
@@ -66,7 +61,7 @@ pub fn cycle(this: *This) void {
 
                 // 00E0 - CLS
                 0x00E0 => {
-                    this.set_draw_needed();
+                    this.setDrawNeeded();
                     for (&this.display) |*row| {
                         row.* = 0;
                     }
@@ -231,13 +226,13 @@ pub fn cycle(this: *This) void {
         // Cxkk - RND Vx, byte
         0xC => {
             const x = (operation >> 8) & 0xF;
-            this.registers[x] = this.generator.random().int(u8) & @as(u8, @truncate(operation & 0xFF));
+            this.registers[x] = this.generator().random().int(u8) & @as(u8, @truncate(operation & 0xFF));
 
             this.program_counter += 2;
         },
 
         0xD => {
-            this.set_draw_needed();
+            this.setDrawNeeded();
 
             this.registers[0xF] = 0;
 
@@ -286,7 +281,7 @@ pub fn cycle(this: *This) void {
 
                 // Fx0A - LD Vx, K
                 0x0A => {
-                    const keys_statuses: *keys_statuses_type = @ptrCast(@alignCast(&this.ram[keys_statuses_location]));
+                    const keys_statuses = this.keysStatuses();
 
                     if (keys_statuses[0] == std.math.maxInt(@TypeOf(keys_statuses[0]))) {
                         keys_statuses[0] = this.keys;
@@ -363,16 +358,31 @@ pub fn cycle(this: *This) void {
     }
 }
 
-fn set_draw_needed(this: *This) void {
-    this.ram[is_draw_needed_location] = 1;
+fn keysStatuses(this: *This) *[2]u16 {
+    const keys_statuses_location = font.len;
+    return @ptrCast(@alignCast(&this.ram[keys_statuses_location]));
 }
 
-pub fn is_draw_needed(this: *This) bool {
-    return this.ram[is_draw_needed_location] == 1;
+fn drawNeeded(this: *This) *u8 {
+    const draw_needed_location = font.len + 4;
+    return &this.ram[draw_needed_location];
 }
 
-pub fn clear_draw_needed(this: *This) void {
-    this.ram[is_draw_needed_location] = 0;
+fn generator(this: *This) *std.Random.Pcg {
+    const generator_location = font.len + 10; // this offset is picked since it matches the alignment
+    return @alignCast(@ptrCast(&this.ram[generator_location]));
+}
+
+fn setDrawNeeded(this: *This) void {
+    this.drawNeeded().* = 1;
+}
+
+pub fn isDrawNeeded(this: *This) bool {
+    return this.drawNeeded().* == 1;
+}
+
+pub fn clearDrawNeeded(this: *This) void {
+    this.drawNeeded().* = 0;
 }
 
 test "chip8" {
