@@ -22,9 +22,8 @@ pub fn shouldClose(this: This) bool {
     return this.window.shouldClose();
 }
 
-pub fn handleEvents(this: This) void {
+pub fn handleEvents(_: This) void {
     glfw.pollEvents();
-    _ = this;
 }
 
 pub fn getSize(this: This) glfw.Window.Size {
