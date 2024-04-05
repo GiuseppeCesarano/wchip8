@@ -15,6 +15,10 @@
             .url = "https://pkg.machengine.org/mach-gpu-dawn/cce4d19945ca6102162b0cbbc546648edb38dc41.tar.gz",
 	    .hash = "1220a6e3f4772fed665bb5b1792cf5cff8ac51af42a57ad8d276e394ae19f310a92e"
         },
+	.chip8_test_suite = .{
+	    .url = "https://github.com/Timendus/chip8-test-suite/archive/refs/tags/v4.1.tar.gz",
+	    .hash = "12200b00d0c47716b72c0048720d809112153fb448c5d52d51fb05773a6dba049ec0",
+	},
     },
 
     .paths = .{

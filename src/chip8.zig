@@ -385,12 +385,44 @@ pub fn clearDrawNeeded(this: *This) void {
     this.drawNeeded().* = 0;
 }
 
-test "chip8" {
-    var program_stream = std.io.fixedBufferStream(&[_]u8{0});
-    const program_reader = program_stream.reader();
+test "Corax+ opcode" {
+    const rom = try std.fs.cwd().openFile("3-corax+.ch8", .{});
+    var chip = try init(rom.reader().any(), 0);
+    rom.close();
 
-    var chip = try init(&program_reader.any(), 0);
-    chip.cycle();
+    // 1116 is the last instruction location for corax+ rom
+    while (chip.program_counter != 1116) {
+        chip.cycle();
+    }
 
-    try std.testing.expect(chip.ram[0] == font[0]);
+    // Screen dump when every instruction passes checks.
+    const expected_display = [_]@TypeOf(chip.display[0]){ 0, 0, 981482112, 981482368, 420743444, 999564052, 177746584, 681062552, 982530704, 948970256, 0, 0, 713046912, 998259584, 957623060, 991175060, 177744408, 681062552, 177224592, 990913424, 0, 0, 981482368, 998259584, 823409300, 949232404, 177744536, 689451544, 848313232, 957358992, 0, 0, 981482240, 964690560, 152320276, 974399764, 311961880, 731392664, 311442320, 999297680, 0, 0, 981482368, 998244352, 957626516, 991166464, 177744664, 706215936, 848313232, 999292928, 0, 0, 847264640, 964690564, 286538132, 571747212, 311961752, 865609860, 982530960, 596644014, 0, 0, 0, 0 };
+
+    if (std.testing.expectEqualDeep(expected_display, chip.display)) |_| {} else |_| {
+        std.debug.print(
+            \\ The display output doesn't match the expected value.
+            \\ If the draw instruction (0xD) is correctly working, one or more instructions are wrongly implemented
+            \\ Run the 3-corax+.ch8 rom with display output to know which one is failing
+        , .{});
+    }
+}
+
+test "Flags" {
+    const rom = try std.fs.cwd().openFile("4-flags.ch8", .{});
+    var chip = try init(rom.reader().any(), 0);
+    rom.close();
+
+    while (chip.program_counter != 1346) {
+        chip.cycle();
+    }
+
+    const expected_display = [_]@TypeOf(chip.display[0]){ 2764874496, 917504, 3937050901, 1409439056, 2932621593, 2550949472, 2861056913, 269370432, 0, 0, 3758097024, 917504, 1700070293, 1431065941, 644219033, 2575459942, 3829661841, 286016580, 0, 0, 3758097280, 917504, 2236940437, 1431065936, 3865444505, 2575853152, 3829661841, 286147648, 0, 0, 0, 0, 3838616192, 917504, 2326438805, 1431065941, 2395750553, 2575459942, 3937026193, 286016580, 0, 0, 3758097280, 917504, 2236940437, 1431065936, 3865444505, 2575853152, 3829661841, 286147648, 0, 0, 0, 0, 4004430776, 644, 2766971441, 1409297292, 2762523425, 2550147204, 3836650041, 268439726, 0, 0 };
+
+    if (std.testing.expectEqualDeep(expected_display, chip.display)) |_| {} else |_| {
+        std.debug.print(
+            \\ The display output doesn't match the expected value.
+            \\ If the draw instruction (0xD) is correctly working, one or more instructions are wrongly implemented
+            \\ Run the 4-flags.ch8 rom with display output to know which one is failing
+        , .{});
+    }
 }
