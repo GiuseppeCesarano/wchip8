@@ -231,6 +231,7 @@ pub fn cycle(this: *This) void {
             this.program_counter += 2;
         },
 
+        // Dxyn - DRW Vx, Vy, nibble
         0xD => {
             this.setDrawNeeded();
 
@@ -401,7 +402,7 @@ test "Corax+ opcode" {
     if (std.testing.expectEqualDeep(expected_display, chip.display)) |_| {} else |_| {
         std.debug.print(
             \\ The display output doesn't match the expected value.
-            \\ If the draw instruction (0xD) is correctly working, one or more instructions are wrongly implemented
+            \\ If the draw instruction (0xDxyn) is correctly working, one or more instructions are wrongly implemented
             \\ Run the 3-corax+.ch8 rom with display output to know which one is failing
         , .{});
     }
@@ -421,7 +422,7 @@ test "Flags" {
     if (std.testing.expectEqualDeep(expected_display, chip.display)) |_| {} else |_| {
         std.debug.print(
             \\ The display output doesn't match the expected value.
-            \\ If the draw instruction (0xD) is correctly working, one or more instructions are wrongly implemented
+            \\ If the draw instruction (0xDxyn) is correctly working, one or more instructions are wrongly implemented
             \\ Run the 4-flags.ch8 rom with display output to know which one is failing
         , .{});
     }

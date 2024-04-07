@@ -9,7 +9,6 @@ pub const GPUInterface = gpu.dawn.Interface;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-
     const allocator = gpa.allocator();
 
     const options = getCommandLineOptions(allocator);
@@ -23,6 +22,7 @@ pub fn main() !void {
     defer screen.deinit();
 
     var chip = try Chip8.init(rom.reader().any(), @intCast(std.time.timestamp()));
+
     rom.close();
 
     var pointers_wrapper = [2]*anyopaque{ &screen, &chip.keys };
