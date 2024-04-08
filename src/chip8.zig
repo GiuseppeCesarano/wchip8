@@ -36,10 +36,12 @@ stack_pointer: u8,
 display: [64]u32,
 keys: u16,
 
+generator: std.Random.Pcg,
+
 pub fn init(program_reader: std.io.AnyReader, seed: u64) !This {
     var instance = std.mem.zeroInit(This, .{ .program_counter = program_entrypoint, .ram = undefined });
 
-    instance.generator().* = std.Random.Pcg.init(seed);
+    instance.generator = std.Random.Pcg.init(seed);
 
     std.mem.copyForwards(u8, instance.ram[0..font.len], &font);
 
@@ -53,310 +55,408 @@ pub fn init(program_reader: std.io.AnyReader, seed: u64) !This {
 }
 
 pub fn cycle(this: *This) void {
-    const operation = @as(u16, this.ram[this.program_counter]) << 8 | this.ram[this.program_counter + 1];
+    const operation = this.opcode();
 
-    switch (operation >> 12) {
-        0x0 => {
-            switch (operation) {
-
-                // 00E0 - CLS
-                0x00E0 => {
-                    this.setDrawNeeded();
-                    for (&this.display) |*row| {
-                        row.* = 0;
-                    }
-                },
-
-                // 00EE - RET
-                0x00EE => {
-                    this.stack_pointer -= 1;
-                    this.program_counter = this.stack[this.stack_pointer];
-                },
-
-                // 0nnn - SYS addr
-                else => {
-                    // This instruction is only used on the old computers on which Chip-8 was originally implemented. It is ignored by modern interpreters.
-                },
-            }
-            this.program_counter += 2;
-        },
-
-        // 1nnn - JP addr
-        0x1 => {
-            this.program_counter = operation & 0x0FFF;
-        },
-
-        // 2nnn - CALL addr
-        0x2 => {
-            this.stack[this.stack_pointer] = this.program_counter;
-            this.stack_pointer += 1;
-            this.program_counter = operation & 0x0FFF;
-        },
-
-        // 3xkk - SE Vx, byte
-        0x3 => {
-            const x = (operation >> 8) & 0xF;
-            this.program_counter += if (this.registers[x] == (operation & 0xFF)) 4 else 2;
-        },
-
-        // 4xkk - SNE Vx, byte
-        0x4 => {
-            const x = (operation >> 8) & 0xF;
-            this.program_counter += if (this.registers[x] != (operation & 0xFF)) 4 else 2;
-        },
-
-        // 5xy0 - SE Vx, Vy
-        0x5 => {
-            const x = (operation >> 8) & 0xF;
-            const y = (operation >> 4) & 0xF;
-
-            this.program_counter += if (this.registers[x] == this.registers[y]) 4 else 2;
-        },
-
-        // 6xkk - LD Vx, byte
-        0x6 => {
-            const x = (operation >> 8) & 0xF;
-            this.registers[x] = @truncate(operation & 0xFF);
-
-            this.program_counter += 2;
-        },
-
-        // 7xkk - ADD Vx, byte
-        0x7 => {
-            const x = (operation >> 8) & 0xF;
-            this.registers[x] = @addWithOverflow(this.registers[x], @as(u8, @truncate(operation & 0xFF)))[0];
-
-            this.program_counter += 2;
-        },
-
-        0x8 => {
-            const x = (operation >> 8) & 0xF;
-            const y = (operation >> 4) & 0xF;
-
+    // TODO: remove all pc increments except for the first one.
+    switch (operation) {
+        0x0000...0x00DF, 0x00E1...0x00ED, 0x00EF...0x0FFF => this.program_counter += 2,
+        0x00E0 => this.cls(),
+        0x00EE => this.ret(),
+        0x1000...0x1FFF => this.jp_addr(),
+        0x2000...0x2FFF => this.call_addr(),
+        0x3000...0x3FFF => this.se_vx_byte(),
+        0x4000...0x4FFF => this.sne_vx_byte(),
+        0x5000...0x5FFF => this.se_vx_vy(),
+        0x6000...0x6FFF => this.ld_vx_byte(),
+        0x7000...0x7FFF => this.add_vx_byte(),
+        0x8000...0x8FFF => {
             switch (operation & 0xF) {
-
-                //  8xy0 - LD Vx, Vy
-                0x0 => {
-                    this.registers[x] = this.registers[y];
-                },
-
-                // 8xy1 - OR Vx, Vy
-                0x1 => {
-                    this.registers[x] |= this.registers[y];
-                    this.registers[0xF] = 0;
-                },
-
-                // 8xy2 - AND Vx, Vy
-                0x2 => {
-                    this.registers[x] &= this.registers[y];
-                    this.registers[0xF] = 0;
-                },
-
-                // 8xy3 - XOR Vx, Vy
-                0x3 => {
-                    this.registers[x] ^= this.registers[y];
-                    this.registers[0xF] = 0;
-                },
-
-                // 8xy4 - ADD Vx, Vy
-                0x4 => {
-                    const res = @addWithOverflow(this.registers[x], this.registers[y]);
-
-                    this.registers[x] = res[0];
-                    this.registers[0xF] = res[1];
-                },
-
-                // 8xy5 - SUB Vx, Vy
-                0x5 => {
-                    const sub_res = @subWithOverflow(this.registers[x], this.registers[y]);
-
-                    this.registers[x] = sub_res[0];
-                    this.registers[0xF] = ~sub_res[1];
-                },
-
-                // 8xy6 - SHR Vx {, Vy}
-                0x6 => {
-                    const flag = this.registers[y] & 1;
-
-                    this.registers[x] = this.registers[y] >> 1;
-                    this.registers[0xF] = flag;
-                },
-
-                // 8xy7 - SUBN Vx, Vy
-                0x7 => {
-                    const sub_res = @subWithOverflow(this.registers[y], this.registers[x]);
-
-                    this.registers[x] = sub_res[0];
-                    this.registers[0xF] = ~sub_res[1];
-                },
-
-                // 8xyE - SHL Vx {, Vy}
-                0xE => {
-                    const res = @shlWithOverflow(this.registers[y], 1);
-
-                    this.registers[x] = res[0];
-                    this.registers[0xF] = res[1];
-                },
-                else => {},
+                0x0 => this.ld_vx_vy(),
+                0x1 => this.or_vx_vy(),
+                0x2 => this.and_vx_vy(),
+                0x3 => this.xor_vx_vy(),
+                0x4 => this.add_vx_vy(),
+                0x5 => this.sub_vx_vy(),
+                0x6 => this.shr_vx(),
+                0x7 => this.subn_vx_vy(),
+                0xE => this.shl_vx(),
+                else => this.program_counter += 2,
             }
-
-            this.program_counter += 2;
         },
-
-        // 9xy0 - SNE Vx, Vy
-        0x9 => {
-            const x = (operation >> 8) & 0xF;
-            const y = (operation >> 4) & 0xF;
-
-            this.program_counter += if (this.registers[x] != this.registers[y]) 4 else 2;
+        0x9000...0x9FFF => this.sne_vx_vy(),
+        0xA000...0xAFFF => this.ld_i_addr(),
+        0xB000...0xBFFF => this.jp_v0_addr(),
+        0xC000...0xCFFF => this.rnd_vx_byte(),
+        0xD000...0xDFFF => this.drw_vx_vy_nibble(),
+        0xE000...0xEFFF => {
+            switch (operation & 0xFF) {
+                0x9E => this.skp_vx(),
+                0xA1 => this.sknp_vx(),
+                else => this.program_counter += 2,
+            }
         },
-
-        // Annn - LD I, addr
-        0xA => {
-            this.index = operation & 0xFFF;
-
-            this.program_counter += 2;
+        0xF000...0xFFFF => {
+            switch (operation & 0xFF) {
+                0x07 => this.ld_vx_dt(),
+                0x0A => this.ld_vx_k(),
+                0x15 => this.ld_dt_vx(),
+                0x18 => this.ld_st_vx(),
+                0x1E => this.add_i_vx(),
+                0x29 => this.ld_f_vx(),
+                0x33 => this.ld_b_vx(),
+                0x55 => this.ld_i_vx(),
+                0x65 => this.ld_vx_i(),
+                else => this.program_counter += 2,
+            }
         },
+    }
+}
 
-        // Bnnn - JP V0, addr
-        0xB => {
-            this.program_counter = (operation & 0xFFF) + this.registers[0];
-        },
+fn cls(this: *This) void {
+    this.setDrawNeeded();
+    for (&this.display) |*row| {
+        row.* = 0;
+    }
 
-        // Cxkk - RND Vx, byte
-        0xC => {
-            const x = (operation >> 8) & 0xF;
-            this.registers[x] = this.generator().random().int(u8) & @as(u8, @truncate(operation & 0xFF));
+    this.program_counter += 2;
+}
 
-            this.program_counter += 2;
-        },
+fn ret(this: *This) void {
+    this.stack_pointer -= 1;
+    this.program_counter = this.stack[this.stack_pointer];
 
-        // Dxyn - DRW Vx, Vy, nibble
-        0xD => {
-            this.setDrawNeeded();
+    this.program_counter += 2;
+}
 
-            this.registers[0xF] = 0;
+fn jp_addr(this: *This) void {
+    this.program_counter = this.opcode() & 0xFFF;
+}
 
-            const x_start = this.registers[(operation >> 8) & 0xF];
-            const y_start = this.registers[(operation >> 4) & 0xF];
-            const n = operation & 0xF;
+fn call_addr(this: *This) void {
+    this.stack[this.stack_pointer] = this.program_counter;
+    this.stack_pointer += 1;
 
-            for (0..n) |y| {
-                const coord_y = (y_start + y) % 32;
+    this.program_counter = this.opcode() & 0x0FFF;
+}
 
-                for (0..8) |x| {
-                    if ((this.ram[this.index + y] & (@as(u8, 0x80) >> @intCast(x))) != 0) {
-                        const coord_x = (x_start + x) % 64;
-                        const index = coord_y * 2 + coord_x / 32;
-                        const mask = @as(u32, 1) << @intCast(31 - (coord_x % 32));
+fn se_vx_byte(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
 
-                        this.display[index] ^= mask;
-                        this.registers[0x0F] = if (this.display[index] & mask == 0) 1 else this.registers[0x0F];
-                    }
+    this.program_counter += if (this.registers[x] == (operation & 0xFF)) 4 else 2;
+}
+
+fn sne_vx_byte(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+
+    this.program_counter += if (this.registers[x] != (operation & 0xFF)) 4 else 2;
+}
+
+fn se_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    this.program_counter += if (this.registers[x] == this.registers[y]) 4 else 2;
+}
+
+fn ld_vx_byte(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+
+    this.registers[x] = @truncate(operation & 0xFF);
+
+    this.program_counter += 2;
+}
+
+fn add_vx_byte(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+
+    this.registers[x] = @addWithOverflow(this.registers[x], @as(u8, @truncate(operation & 0xFF)))[0];
+
+    this.program_counter += 2;
+}
+
+fn ld_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    this.registers[x] = this.registers[y];
+
+    this.program_counter += 2;
+}
+
+fn or_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    this.registers[x] |= this.registers[y];
+    this.registers[0xF] = 0;
+
+    this.program_counter += 2;
+}
+
+fn and_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    this.registers[x] &= this.registers[y];
+    this.registers[0xF] = 0;
+
+    this.program_counter += 2;
+}
+
+fn xor_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    this.registers[x] ^= this.registers[y];
+    this.registers[0xF] = 0;
+
+    this.program_counter += 2;
+}
+
+fn add_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    const res = @addWithOverflow(this.registers[x], this.registers[y]);
+
+    this.registers[x] = res[0];
+    this.registers[0xF] = res[1];
+
+    this.program_counter += 2;
+}
+
+fn sub_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    const sub_res = @subWithOverflow(this.registers[x], this.registers[y]);
+
+    this.registers[x] = sub_res[0];
+    this.registers[0xF] = ~sub_res[1];
+
+    this.program_counter += 2;
+}
+
+fn shr_vx(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    const flag = this.registers[y] & 1;
+
+    this.registers[x] = this.registers[y] >> 1;
+    this.registers[0xF] = flag;
+
+    this.program_counter += 2;
+}
+
+fn subn_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    const sub_res = @subWithOverflow(this.registers[y], this.registers[x]);
+
+    this.registers[x] = sub_res[0];
+    this.registers[0xF] = ~sub_res[1];
+
+    this.program_counter += 2;
+}
+
+fn shl_vx(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    const res = @shlWithOverflow(this.registers[y], 1);
+
+    this.registers[x] = res[0];
+    this.registers[0xF] = res[1];
+
+    this.program_counter += 2;
+}
+
+fn sne_vx_vy(this: *This) void {
+    const operation = this.opcode();
+    const x = (operation >> 8) & 0xF;
+    const y = (operation >> 4) & 0xF;
+
+    this.program_counter += if (this.registers[x] != this.registers[y]) 4 else 2;
+}
+
+fn ld_i_addr(this: *This) void {
+    this.index = this.opcode() & 0xFFF;
+
+    this.program_counter += 2;
+}
+
+fn jp_v0_addr(this: *This) void {
+    this.program_counter = (this.opcode() & 0xFFF) + this.registers[0];
+}
+
+fn rnd_vx_byte(this: *This) void {
+    const operation = this.opcode();
+
+    const x = (operation >> 8) & 0xF;
+    this.registers[x] = this.generator.random().int(u8) & @as(u8, @truncate(operation & 0xFF));
+
+    this.program_counter += 2;
+}
+
+fn drw_vx_vy_nibble(this: *This) void {
+    this.setDrawNeeded();
+
+    const operation = this.opcode();
+
+    this.registers[0xF] = 0;
+
+    const x_start = this.registers[(operation >> 8) & 0xF];
+    const y_start = this.registers[(operation >> 4) & 0xF];
+    const n = operation & 0xF;
+
+    for (0..n) |y| {
+        const coord_y = (y_start + y) % 32;
+
+        for (0..8) |x| {
+            if ((this.ram[this.index + y] & (@as(u8, 0x80) >> @intCast(x))) != 0) {
+                const coord_x = (x_start + x) % 64;
+                const index = coord_y * 2 + coord_x / 32;
+                const mask = @as(u32, 1) << @intCast(31 - (coord_x % 32));
+
+                this.display[index] ^= mask;
+                this.registers[0x0F] = if (this.display[index] & mask == 0) 1 else this.registers[0x0F];
+            }
+        }
+    }
+
+    this.program_counter += 2;
+}
+
+fn skp_vx(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+    const shift = (@bitSizeOf(@TypeOf(this.keys)) - 1) - @as(u4, @intCast(this.registers[x]));
+    const key = ((this.keys >> shift) & 1) == 1;
+
+    this.program_counter += if (key) 4 else 2;
+}
+
+fn sknp_vx(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+    const shift = (@bitSizeOf(@TypeOf(this.keys)) - 1) - @as(u4, @intCast(this.registers[x]));
+    const key = ((this.keys >> shift) & 1) == 1;
+
+    this.program_counter += if (!key) 4 else 2;
+}
+
+fn ld_vx_dt(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+    this.registers[x] = this.delay_timer;
+
+    this.program_counter += 2;
+}
+
+fn ld_vx_k(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+
+    const keys_statuses = this.keysStatuses();
+
+    if (keys_statuses[0] == std.math.maxInt(@TypeOf(keys_statuses[0]))) {
+        keys_statuses[0] = this.keys;
+    } else {
+        const masked_keys = ~keys_statuses[0] & keys_statuses[1] & ~this.keys;
+
+        if (masked_keys != 0) {
+            for (0..16) |index| {
+                const shift = (@bitSizeOf(@TypeOf(masked_keys)) - 1) - @as(u4, @intCast(index));
+
+                if ((masked_keys >> shift) & 1 == 1) {
+                    this.registers[x] = @as(u8, @intCast(index));
+                    break;
                 }
             }
+            keys_statuses[0] = std.math.maxInt(@TypeOf(keys_statuses[0]));
+            keys_statuses[1] = 0;
 
             this.program_counter += 2;
-        },
-
-        // Ex9E - SKP Vx
-        // ExA1 - SKNP Vx
-        0xE => {
-            const x = (operation >> 8) & 0xF;
-            const mode = operation & 0xFF;
-            const shift = (@bitSizeOf(@TypeOf(this.keys)) - 1) - @as(u4, @intCast(this.registers[x]));
-            const key = ((this.keys >> shift) & 1) == 1;
-
-            this.program_counter += if ((mode == 0x9E and key) or (mode == 0xA1 and !key)) 4 else 2;
-        },
-
-        0xF => {
-            const x = (operation >> 8) & 0xF;
-
-            switch (operation & 0xFF) {
-
-                // Fx07 - LD Vx, DT
-                0x07 => {
-                    this.registers[x] = this.delay_timer;
-                },
-
-                // Fx0A - LD Vx, K
-                0x0A => {
-                    const keys_statuses = this.keysStatuses();
-
-                    if (keys_statuses[0] == std.math.maxInt(@TypeOf(keys_statuses[0]))) {
-                        keys_statuses[0] = this.keys;
-                    } else {
-                        const masked_keys = ~keys_statuses[0] & keys_statuses[1] & ~this.keys;
-
-                        if (masked_keys != 0) {
-                            for (0..16) |index| {
-                                const shift = (@bitSizeOf(@TypeOf(masked_keys)) - 1) - @as(u4, @intCast(index));
-
-                                if ((masked_keys >> shift) & 1 == 1) {
-                                    this.registers[x] = @as(u8, @intCast(index));
-                                    break;
-                                }
-                            }
-                            keys_statuses[0] = std.math.maxInt(@TypeOf(keys_statuses[0]));
-                            keys_statuses[1] = 0;
-                            // Negate the next negation, resulting in a normal
-                            // program count increment.
-                            this.program_counter += 2;
-                        } else {
-                            keys_statuses[1] = this.keys;
-                        }
-                    }
-
-                    // Negate increment at the end of the switch
-                    this.program_counter -= 2;
-                },
-
-                // Fx15 - LD DT, Vx
-                0x15 => {
-                    this.delay_timer = this.registers[x];
-                },
-
-                // Fx18 - LD ST, Vx
-                0x18 => {
-                    this.sound_timer = this.registers[x];
-                },
-
-                // Fx1E - ADD I, Vx
-                0x1E => {
-                    this.index += this.registers[x];
-                },
-
-                // Fx29 - LD F, Vx
-                0x29 => {
-                    this.index = x * 5;
-                },
-
-                // Fx33 - LD B, Vx
-                0x33 => {
-                    this.ram[this.index] = @divTrunc(this.registers[x], 100);
-                    this.ram[this.index + 1] = @divTrunc(this.registers[x], 10) % 10;
-                    this.ram[this.index + 2] = this.registers[x] % 10;
-                },
-
-                // Fx55 - LD [I], Vx
-                0x55 => {
-                    std.mem.copyForwards(u8, this.ram[this.index..], this.registers[0 .. x + 1]);
-                    this.index += 1;
-                },
-
-                // Fx65 - LD Vx, [I]
-                0x65 => {
-                    std.mem.copyForwards(u8, &this.registers, this.ram[this.index .. this.index + x + 1]);
-                    this.index += 1;
-                },
-                else => {},
-            }
-
-            this.program_counter += 2;
-        },
-        else => {},
+        } else {
+            keys_statuses[1] = this.keys;
+        }
     }
+}
+
+fn ld_dt_vx(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+
+    this.delay_timer = this.registers[x];
+
+    this.program_counter += 2;
+}
+
+fn ld_st_vx(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+
+    this.sound_timer = this.registers[x];
+
+    this.program_counter += 2;
+}
+
+fn add_i_vx(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+
+    this.index += this.registers[x];
+
+    this.program_counter += 2;
+}
+
+fn ld_f_vx(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+
+    this.index = x * 5;
+
+    this.program_counter += 2;
+}
+
+fn ld_b_vx(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+
+    this.ram[this.index] = @divTrunc(this.registers[x], 100);
+    this.ram[this.index + 1] = @divTrunc(this.registers[x], 10) % 10;
+    this.ram[this.index + 2] = this.registers[x] % 10;
+
+    this.program_counter += 2;
+}
+
+fn ld_i_vx(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+
+    std.mem.copyForwards(u8, this.ram[this.index..], this.registers[0 .. x + 1]);
+    this.index += 1;
+
+    this.program_counter += 2;
+}
+
+fn ld_vx_i(this: *This) void {
+    const x = (this.opcode() >> 8) & 0xF;
+
+    std.mem.copyForwards(u8, &this.registers, this.ram[this.index .. this.index + x + 1]);
+    this.index += 1;
+
+    this.program_counter += 2;
+}
+
+fn opcode(this: This) u16 {
+    return @as(u16, this.ram[this.program_counter]) << 8 | this.ram[this.program_counter + 1];
 }
 
 fn keysStatuses(this: *This) *[2]u16 {
@@ -367,11 +467,6 @@ fn keysStatuses(this: *This) *[2]u16 {
 fn drawNeeded(this: *This) *u8 {
     const draw_needed_location = font.len + 4;
     return &this.ram[draw_needed_location];
-}
-
-fn generator(this: *This) *std.Random.Pcg {
-    const generator_location = font.len + 10; // this offset is picked since it matches the alignment
-    return @alignCast(@ptrCast(&this.ram[generator_location]));
 }
 
 fn setDrawNeeded(this: *This) void {
