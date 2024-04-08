@@ -57,7 +57,6 @@ pub fn init(program_reader: std.io.AnyReader, seed: u64) !This {
 pub fn cycle(this: *This) void {
     const operation = this.opcode();
 
-    // TODO: remove all pc increments except for the first one.
     switch (operation) {
         0x0000...0x00DF, 0x00E1...0x00ED, 0x00EF...0x0FFF => this.program_counter += 2,
         0x00E0 => this.cls(),
@@ -80,7 +79,7 @@ pub fn cycle(this: *This) void {
                 0x6 => this.shr_vx(),
                 0x7 => this.subn_vx_vy(),
                 0xE => this.shl_vx(),
-                else => this.program_counter += 2,
+                else => this.unknownOp(),
             }
         },
         0x9000...0x9FFF => this.sne_vx_vy(),
@@ -92,7 +91,7 @@ pub fn cycle(this: *This) void {
             switch (operation & 0xFF) {
                 0x9E => this.skp_vx(),
                 0xA1 => this.sknp_vx(),
-                else => this.program_counter += 2,
+                else => this.unknownOp(),
             }
         },
         0xF000...0xFFFF => {
@@ -106,7 +105,7 @@ pub fn cycle(this: *This) void {
                 0x33 => this.ld_b_vx(),
                 0x55 => this.ld_i_vx(),
                 0x65 => this.ld_vx_i(),
-                else => this.program_counter += 2,
+                else => this.unknownOp(),
             }
         },
     }
@@ -452,6 +451,11 @@ fn ld_vx_i(this: *This) void {
     std.mem.copyForwards(u8, &this.registers, this.ram[this.index .. this.index + x + 1]);
     this.index += 1;
 
+    this.program_counter += 2;
+}
+
+fn unknownOp(this: *This) void {
+    std.io.getStdErr().writer().print("Error: unknown opcode 0x{x}, wchip8 will ignore it.\n", .{this.opcode()}) catch {};
     this.program_counter += 2;
 }
 
