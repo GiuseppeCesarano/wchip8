@@ -14,10 +14,12 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(exe);
     try gpu.link(b, exe, &exe.root_module, .{});
-    exe.root_module.addImport("glfw", b.dependency("mach_glfw", .{
+    const glfw_dep = b.lazyDependency("mach_glfw", .{
         .target = target,
         .optimize = optimize,
-    }).module("mach-glfw"));
+    }) orelse @panic("Could not resolve glfw dep");
+
+    exe.root_module.addImport("glfw", glfw_dep.module("mach-glfw"));
     exe.root_module.addImport("gpu", b.dependency("mach_gpu", .{
         .target = target,
         .optimize = optimize,

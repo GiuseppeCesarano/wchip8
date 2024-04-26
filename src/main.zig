@@ -5,8 +5,6 @@ const gpu = @import("gpu");
 const std = @import("std");
 const glfw = @import("glfw");
 
-pub const GPUInterface = gpu.dawn.Interface;
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
